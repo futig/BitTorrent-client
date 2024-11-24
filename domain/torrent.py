@@ -28,16 +28,16 @@ class TorrentFile:
             raise ValueError(f"Ошибка декодирования торрент-файла: {e}")
 
     def _decode_torrent_file(self):
-        with open(self.file_path, 'rb') as f:
+        with open(self.file_path, "rb") as f:
             decoded = bencodepy.decode(f.read())
 
-        self.info = decoded[b'info']
-        self.announce = decoded[b'announce'].decode('utf-8')
-        self.multi_file = b'files' in self.info
-        self.piece_length = self.info[b'piece length']
-        self.pieces = self.info[b'pieces']
+        self.info = decoded[b"info"]
+        self.announce = decoded[b"announce"].decode("utf-8")
+        self.multi_file = b"files" in self.info
+        self.piece_length = self.info[b"piece length"]
+        self.pieces = self.info[b"pieces"]
         self.pieces_count = len(self.pieces) // 20
-        self.name = self.info[b'name'].decode('utf-8')
+        self.name = self.info[b"name"].decode("utf-8")
 
         self.files = self._get_files()
         self.size = sum(file.length for file in self.files)
@@ -45,16 +45,16 @@ class TorrentFile:
 
     def _get_files(self):
         if self.multi_file:
-            files = self.info[b'files']
+            files = self.info[b"files"]
             file_list = []
             for file in files:
-                length = file[b'length']
-                path = b'/'.join(file[b'path']).decode('utf-8')
+                length = file[b"length"]
+                path = b"/".join(file[b"path"]).decode("utf-8")
                 file_list.append(File(path, length))
             return file_list
         else:
-            length = self.info.get(b'length')
-            name = self.info.get(b'name', b'').decode('utf-8')
+            length = self.info.get(b"length")
+            name = self.info.get(b"name", b"").decode("utf-8")
             return [File(name, length)]
 
     def get_info_hash(self):

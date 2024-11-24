@@ -1,41 +1,47 @@
-import asyncio
+import os
+import aiofiles
 from domain.torrent import TorrentFile
+import domain.exceptions as exc
 from application.interfaces.ifile_manager import IFileManager
 
 
 class FileManager(IFileManager):
     def __init__(self, download_path, torrent):
         self.download_path = download_path
-        self.file_data = bytearray(torrent.total_length)
-        self.lock = asyncio.Lock()
-        self.piece_length = self.torrent.piece_length
-        self.total_length = self.torrent.total_length
-        self.file_data = bytearray(self.total_length)
-        self.downloaded_pieces = set()
-        
-        
-    async def save_file(self):
-        if self.torrent.multi_file:
-            for file_info in self.torrent.files:
-                path = file_info["path"]
-                length = file_info["length"]
-                data = self.file_data[:length]
-                with open(path, "wb") as f:
-                    f.write(data)
-                self.file_data = self.file_data[length:]
-        else:
-            with open(self.torrent.name, "wb") as f:
-                f.write(self.file_data)
-        print(f"Файл сохранён как {self.torrent.name}")
-        
+        self.torrent = torrent
 
-    async def add_piece(self, index: int, data: bytes):
-        async with self.lock:
-            if index not in self.downloaded_pieces:
-                start = index * self.piece_length
-                end = start + len(data)
-                self.file_data[start:end] = data
-                self.downloaded_pieces.add(index)
-                print(
-                    f"Кусок {index} добавлен. Всего загружено {len(self.downloaded_pieces)}/{self.total_pieces}"
-                )
+    async def create_empty_files(self):
+        for file in self.torrent.files:
+            file_path = os.path.join(self.download_path, file.path)
+            directory = os.path.dirname(file_path)
+            try:
+                os.makedirs(directory, exist_ok=True)
+                async with aiofiles.open(file_path, 'wb') as f:
+                    await f.seek(file.length - 1)
+                    await f.write(b'\0')
+            except Exception:
+                raise exc.DirectoriesCreationException()
+
+    async def add_piece(self, piece_index, piece_data):
+        piece_start = piece_index * self.torrent.piece_length
+        piece_end = min(piece_start + len(piece_data), self.torrent.size)
+
+        current_pos = piece_start
+        for file in self.torrent.files:
+            file_path = os.path.join(self.download_path, file.path)
+            file_start = sum(f.length for f in self.torrent.files[:self.torrent.files.index(file)])
+            file_end = file_start + file.length
+
+            if current_pos >= file_end:
+                continue
+            if current_pos < file_start:
+                current_pos = file_start
+
+            async with aiofiles.open(file_path, 'r+b') as f:
+                await f.seek(current_pos - file_start)
+                bytes_to_write = min(piece_end - current_pos, file_end - current_pos)
+                await f.write(piece_data[current_pos - piece_start:current_pos - piece_start + bytes_to_write])
+
+            current_pos += bytes_to_write
+            if current_pos >= piece_end:
+                break

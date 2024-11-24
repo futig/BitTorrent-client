@@ -12,3 +12,11 @@ class NoPeersException(Exception):
 
     def __str__(self):
         return self.message
+
+
+class DirectoriesCreationException(Exception):
+    def __init__(self):
+        self.message = f"Faild to create directories"
+
+    def __str__(self):
+        return self.message

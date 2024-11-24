@@ -28,7 +28,8 @@ class PeerConnection(IPeerConnection):
     async def connect(self):
         try:
             self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_connection(self._ip, self._port), timeout=5)
+                asyncio.open_connection(self._ip, self._port), timeout=5
+            )
             await self._handshake()
             await self._listen()
         except Exception as e:
@@ -43,10 +44,12 @@ class PeerConnection(IPeerConnection):
     async def _handshake(self):
         pstr = b"BitTorrent protocol"
         pstrlen = chr(19).encode()
-        reserved = b'\x00' * 8
+        reserved = b"\x00" * 8
         info_hash = bytes.fromhex(self._torrent.info_hash)
-        peer_id = self._peer_id.encode('utf-8')
-        handshake = struct.pack(f"!B{pstrlen}s8s20s20s", pstrlen, pstr, reserved, info_hash, peer_id)
+        peer_id = self._peer_id.encode("utf-8")
+        handshake = struct.pack(
+            f"!B{pstrlen}s8s20s20s", pstrlen, pstr, reserved, info_hash, peer_id
+        )
         self._writer.write(handshake)
         await self._writer.drain()
 
@@ -82,7 +85,9 @@ class PeerConnection(IPeerConnection):
                 break
             except Exception as e:
                 if self._debug:
-                    print(f"Ошибка при получении данных от {self._ip}:{self._port} - {e}")
+                    print(
+                        f"Ошибка при получении данных от {self._ip}:{self._port} - {e}"
+                    )
                 break
 
     async def _handle_message(self, msg_id, payload):
@@ -105,7 +110,9 @@ class PeerConnection(IPeerConnection):
             await self._request_pieces()
 
         elif msg_id == MessageTypes.BITFIELD:
-            self._available_pieces = bitstring.BitArray(bytes=payload, length=self._torrent.pieces_count)
+            self._available_pieces = bitstring.BitArray(
+                bytes=payload, length=self._torrent.pieces_count
+            )
             if self._debug:
                 print(f"Пир {self._ip}:{self._port} прислал bitfield.")
             self._writer.write(b"\0\0\0\1\2")
@@ -119,7 +126,11 @@ class PeerConnection(IPeerConnection):
             return
         # Ограничиваем количество одновременных запросов
         for i in range(self._torrent.pieces_count):
-            if self._available_pieces[i] and i not in self._requested_pieces and i not in self._downloaded_pieces:
+            if (
+                self._available_pieces[i]
+                and i not in self._requested_pieces
+                and i not in self._downloaded_pieces
+            ):
                 await self._request_piece(i)
                 self._requested_pieces.add(i)
                 if len(self._requested_pieces) >= self._requestsLimit:
@@ -131,7 +142,7 @@ class PeerConnection(IPeerConnection):
             piece_length = self._torrent.size % self._torrent.piece_length
 
         self._in_progress_pieces[piece_index] = {}
-        block = 2 ** 14
+        block = 2**14
         for offset in range(0, piece_length, block):
             length = min(block, piece_length - offset)
             request = await self.generate_request(length, offset, piece_index)
@@ -139,10 +150,13 @@ class PeerConnection(IPeerConnection):
             await self._writer.drain()
 
     async def generate_request(self, length, offset, piece_index):
-        return ((13).to_bytes(4, byteorder='big') + bytes([6])
-                + piece_index.to_bytes(4, byteorder='big')
-                + offset.to_bytes(4, byteorder='big')
-                + length.to_bytes(4, byteorder='big'))
+        return (
+            (13).to_bytes(4, byteorder="big")
+            + bytes([6])
+            + piece_index.to_bytes(4, byteorder="big")
+            + offset.to_bytes(4, byteorder="big")
+            + length.to_bytes(4, byteorder="big")
+        )
 
     async def _handle_piece(self, payload):
         index = struct.unpack("!I", payload[:4])[0]
@@ -155,13 +169,17 @@ class PeerConnection(IPeerConnection):
             self._in_progress_pieces[index] = {}
         self._in_progress_pieces[index][begin] = block
 
-        if sum(len(block) for block in
-               self._in_progress_pieces[index].values()) >= self._torrent.piece_length:
-            complete_piece = b''.join(block for _, block in sorted(self._in_progress_pieces[index].items()))
+        if (
+            sum(len(block) for block in self._in_progress_pieces[index].values())
+            >= self._torrent.piece_length
+        ):
+            complete_piece = b"".join(
+                block for _, block in sorted(self._in_progress_pieces[index].items())
+            )
             if self._validate_piece(index, complete_piece):
                 if self._debug:
                     print(f"Piece {index} downloaded and verified")
-                await self._file_manager.save_piece(index, complete_piece)
+                await self._file_manager.add_piece(index, complete_piece)
                 self._downloaded_pieces.add(index)
             else:
                 if self._debug:

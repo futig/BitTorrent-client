@@ -7,5 +7,5 @@ class IFileManager(ABC):
         pass
 
     @abstractmethod
-    async def add_piece(self, index: int, data: bytes):
+    async def add_piece(self, index, data):
        pass

@@ -14,7 +14,7 @@ class Downloader(IDownloader):
         self.torrent = TorrentFile(path)
         self.peer_id = generate_peer_id()
         try:
-            self.file_manager = FileManager(config["port"], self.torrent)
+            self.file_manager = FileManager(config["download_path"], self.torrent)
             self.port = config["port"]
             self.debug = config["debug"]
             self.max_connections = config["max_connections"]
@@ -32,21 +32,19 @@ class Downloader(IDownloader):
         if self.debug:
             print(f"Got {len(peers)} peers", end="\n")
         await self.connect_to_peers(peers)
-        # if self._debug:
-        #     await self.monitor_download()
-        await self.file_manager.save_file()
+        print("Done!")
 
     async def connect_to_peers(self, peers):
         connections_count = min(len(peers), self.max_connections)
-        cons = [PeerConnection(peers[i], self.torrent,
-                               self.peer_id, self.file_manager,
-                               self.debug, self.allow_multiple_requests)
-                for i in range(connections_count)]
+        cons = [
+            PeerConnection(
+                peers[i],
+                self.torrent,
+                self.peer_id,
+                self.file_manager,
+                self.debug,
+                self.allow_multiple_requests,
+            )
+            for i in range(connections_count)
+        ]
         await asyncio.gather(con.connect() for con in cons)
-
-    # async def monitor_download(self):
-    #     total_pieces = len(self.torrent.pieces)
-    #     while len(self.downloaded_pieces) < self.total_pieces:
-    #         await asyncio.sleep(1)
-    #         print(f"Загружено {len(self.downloaded_pieces)}/{total_pieces} кусков.")
-    #     print("Скачивание завершено.")

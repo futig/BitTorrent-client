@@ -2,3 +2,4 @@ bencode.py
 click~=8.1.7
 aiohttp
 bitstring
+aiofiles
