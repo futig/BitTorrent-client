@@ -1,13 +1,13 @@
-import asyncio
-from application.downloader import Downloader
+# import asyncio
+from application.controller.downloader import Downloader
 from domain.torrent import TorrentFile
-from application.config_parser import get_downloader_config, get_distributer_config
+from application.utils.config_parser import get_downloader_config, get_distributer_config
 
 
-async def download(path):
+def download(path):
     torrent = TorrentFile(path)
-    downloader = Downloader(torrent, get_downloader_config())
-    await downloader.download()
+    session = Downloader(torrent, get_downloader_config())
+    # await session.start()
     
     
 def distribute(path):
