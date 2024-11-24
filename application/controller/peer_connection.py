@@ -1,134 +1,175 @@
 import asyncio
 import struct
 import hashlib
+import bitstring
 
 from application.interfaces.ipeer_connection import IPeerConnection
+from domain.message_types import MessageTypes
+
 
 class PeerConnection(IPeerConnection):
-    def __init__(self, ip: str, port: int, downloader: DownloadSession):
-        self.ip = ip
-        self.port = port
-        self.downloader = downloader
-        self.reader: Optional[asyncio.StreamReader] = None
-        self.writer: Optional[asyncio.StreamWriter] = None
-        self.interested = False
-        self.choked = True
-        self.peer_id = None
-        self.bitfield = None
+    def __init__(self, peer, torrent, peer_id, file_manager, debug, allowMultiReq):
+        self._ip = peer.ip
+        self._port = peer.port
+        self._peer_id = peer_id
+        self._torrent = torrent
+        self._file_manager = file_manager
+        self._debug = debug
+        self._requestsLimit = 5 if allowMultiReq else 1
+
+        self._reader = None
+        self._writer = None
+        self._choked = True
+        self._available_pieces = bitstring.BitArray(length=self._torrent.pieces_count)
+        self._requested_pieces = set()
+        self._downloaded_pieces = set()
+        self._in_progress_pieces = {}
 
     async def connect(self):
-        """Устанавливает соединение с пиром и инициирует протокол."""
         try:
-            self.reader, self.writer = await asyncio.open_connection(self.ip, self.port)
-            await self.handshake()
-            await self.listen()
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(self._ip, self._port), timeout=5)
+            await self._handshake()
+            await self._listen()
         except Exception as e:
-            print(f"Не удалось подключиться к пиру {self.ip}:{self.port} - {e}")
+            if self._debug:
+                print(f"Не удалось подключиться к пиру {self._ip}:{self._port} - {e}")
+        finally:
+            self._writer.close()
+            await self._writer.wait_closed()
+            if self._debug:
+                print("Connection closed")
 
-    async def handshake(self):
-        """Отправляет handshake сообщение и получает ответ."""
+    async def _handshake(self):
         pstr = b"BitTorrent protocol"
-        pstrlen = len(pstr)
+        pstrlen = chr(19).encode()
         reserved = b'\x00' * 8
-        info_hash = bytes.fromhex(self.downloader.info_hash)
-        peer_id = self.downloader.peer_id.encode('utf-8')
+        info_hash = bytes.fromhex(self._torrent.info_hash)
+        peer_id = self._peer_id.encode('utf-8')
         handshake = struct.pack(f"!B{pstrlen}s8s20s20s", pstrlen, pstr, reserved, info_hash, peer_id)
-        self.writer.write(handshake)
-        await self.writer.drain()
+        self._writer.write(handshake)
+        await self._writer.drain()
 
-        # Читаем handshake от пира
-        response = await self.reader.readexactly(68)
-        # Можно добавить проверку соответствия info_hash и pstr
-        # Для упрощения пропускаем это
-        print(f"Handshake с {self.ip}:{self.port} успешен.")
+        response = await self._reader.readexactly(len(handshake))
+        if not response:
+            if self._debug:
+                print("Failed to receive handshake")
+            return
 
-    async def listen(self):
-        """Прослушивает сообщения от пира."""
+        if self._debug:
+            print(f"Handshake с {self._ip}:{self._port} успешен.")
+
+    async def _listen(self):
         while True:
             try:
-                length_prefix = await self.reader.readexactly(4)
+                length_prefix = await self._reader.readexactly(4)
+                if not length_prefix:
+                    if self._debug:
+                        print("Соединение с {self.ip}:{self.port} закрыто.")
+                    break
+
                 (length,) = struct.unpack("!I", length_prefix)
                 if length == 0:
-                    print(f"Соединение с {self.ip}:{self.port} закрыто пиров.")
+                    if self._debug:
+                        print("Keep alive {self.ip}:{self.port}")
                     break
-                message_id = await self.reader.readexactly(1)
-                payload = await self.reader.readexactly(length - 1)
-                await self.handle_message(message_id, payload)
+
+                message = await self._reader.readexactly(length)
+                await self._handle_message(message[0], message[1:])
             except asyncio.IncompleteReadError:
-                print(f"Соединение с {self.ip}:{self.port} прервано.")
+                if self._debug:
+                    print(f"Соединение с {self._ip}:{self._port} прервано.")
                 break
             except Exception as e:
-                print(f"Ошибка при получении данных от {self.ip}:{self.port} - {e}")
+                if self._debug:
+                    print(f"Ошибка при получении данных от {self._ip}:{self._port} - {e}")
                 break
 
-    async def handle_message(self, message_id: bytes, payload: bytes):
-        """Обрабатывает полученные сообщения от пира."""
-        msg_id = message_id[0]
-        if msg_id == 0:
-            # choke
-            self.choked = True
-            print(f"Пир {self.ip}:{self.port} заблокировал вас.")
-        elif msg_id == 1:
-            # unchoke
-            self.choked = False
-            print(f"Пир {self.ip}:{self.port} разблокировал вас.")
-            asyncio.create_task(self.request_pieces())
-        elif msg_id == 4:
-            # have
+    async def _handle_message(self, msg_id, payload):
+        if msg_id == MessageTypes.CHOKE:
+            self._choked = True
+            if self._debug:
+                print(f"Пир {self._ip}:{self._port} заблокировал вас.")
+
+        elif msg_id == MessageTypes.UNCHOKE:
+            self._choked = False
+            if self._debug:
+                print(f"Пир {self._ip}:{self._port} разблокировал вас.")
+            await self._request_pieces()
+
+        elif msg_id == MessageTypes.HAVE:
             index = struct.unpack("!I", payload)[0]
-            print(f"Пир {self.ip}:{self.port} имеет кусок {index}.")
-        elif msg_id == 5:
-            # bitfield
-            self.bitfield = payload
-            print(f"Пир {self.ip}:{self.port} прислал bitfield.")
-            asyncio.create_task(self.request_pieces())
-        elif msg_id == 7:
-            # piece
-            index = struct.unpack("!I", payload[:4])[0]
-            begin = struct.unpack("!I", payload[4:8])[0]
-            block = payload[8:]
-            # Предполагаем, что begin == 0 и блок соответствует куску
-            if begin == 0:
-                if self.downloader.validate_piece(index, block):
-                    await self.downloader.add_piece(index, block)
-                else:
-                    print(f"Кусок {index} от {self.ip}:{self.port} не прошёл проверку.")
-        # Можно добавить обработку других типов сообщений
+            self._available_pieces[index] = True
+            if self._debug:
+                print(f"Пир {self._ip}:{self._port} имеет кусок {index}.")
+            await self._request_pieces()
 
-    async def request_pieces(self):
-        """Запрашивает куски, которые пир имеет и которые ещё не скачаны."""
-        for index in range(self.downloader.total_pieces):
-            if index in self.downloader.downloaded_pieces:
-                continue
-            byte_index = index // 8
-            bit_index = index % 8
-            if self.bitfield and not (self.bitfield[byte_index] & (1 << (7 - bit_index))):
-                continue
-            if not self.downloader.config.get('allow_multiple_requests', False):
-                # Ограничиваем количество одновременных запросов
-                self.downloader.config['allow_multiple_requests'] = True
-            if not self.downloader.config.get('allow_multiple_requests', False):
-                continue
-            await self.send_request(index)
-            break  # Запрашиваем по одному куску за раз
+        elif msg_id == MessageTypes.BITFIELD:
+            self._available_pieces = bitstring.BitArray(bytes=payload, length=self._torrent.pieces_count)
+            if self._debug:
+                print(f"Пир {self._ip}:{self._port} прислал bitfield.")
+            self._writer.write(b"\0\0\0\1\2")
+            await self._writer.drain()
 
-    async def send_request(self, index: int):
-        """Отправляет запрос на получение куска."""
-        if self.choked:
+        elif msg_id == MessageTypes.PIECE:
+            await self._handle_piece(payload)
+
+    async def _request_pieces(self):
+        if self._choked or len(self._requested_pieces) >= self._requestsLimit:
             return
-        begin = 0
-        length = self.downloader.piece_length
-        request = struct.pack("!IbIII", 13, 6, index, begin, length)
-        # Протокол BitTorrent не включает message_id=6, который является 'request'
-        # Правильный request имеет message_id=6
-        request = struct.pack("!I", 13) + struct.pack("!BIII", 6, index, begin, length)
-        self.writer.write(request)
-        await self.writer.drain()
-        print(f"Запрошен кусок {index} у {self.ip}:{self.port}")
-        
-        
-    def validate_piece(self, index: int, data: bytes) -> bool:
-        """Проверяет целостность куска данных."""
-        hash_func = hashlib.sha1()
-        hash_func.update(data)
-        return hash_func.digest() == self.torrent.pieces[index]
+        # Ограничиваем количество одновременных запросов
+        for i in range(self._torrent.pieces_count):
+            if self._available_pieces[i] and i not in self._requested_pieces and i not in self._downloaded_pieces:
+                await self._request_piece(i)
+                self._requested_pieces.add(i)
+                if len(self._requested_pieces) >= self._requestsLimit:
+                    break
+
+    async def _request_piece(self, piece_index):
+        piece_length = self._torrent.piece_length
+        if piece_index == self._torrent.pieces_count - 1:
+            piece_length = self._torrent.size % self._torrent.piece_length
+
+        self._in_progress_pieces[piece_index] = {}
+        block = 2 ** 14
+        for offset in range(0, piece_length, block):
+            length = min(block, piece_length - offset)
+            request = await self.generate_request(length, offset, piece_index)
+            self._writer.write(request)
+            await self._writer.drain()
+
+    async def generate_request(self, length, offset, piece_index):
+        return ((13).to_bytes(4, byteorder='big') + bytes([6])
+                + piece_index.to_bytes(4, byteorder='big')
+                + offset.to_bytes(4, byteorder='big')
+                + length.to_bytes(4, byteorder='big'))
+
+    async def _handle_piece(self, payload):
+        index = struct.unpack("!I", payload[:4])[0]
+        begin = struct.unpack("!I", payload[4:8])[0]
+        block = payload[8:]
+        if self._debug:
+            print(f"Received piece {index}, offset {begin}, length {len(block)}")
+
+        if index not in self._in_progress_pieces:
+            self._in_progress_pieces[index] = {}
+        self._in_progress_pieces[index][begin] = block
+
+        if sum(len(block) for block in
+               self._in_progress_pieces[index].values()) >= self._torrent.piece_length:
+            complete_piece = b''.join(block for _, block in sorted(self._in_progress_pieces[index].items()))
+            if self._validate_piece(index, complete_piece):
+                if self._debug:
+                    print(f"Piece {index} downloaded and verified")
+                await self._file_manager.save_piece(index, complete_piece)
+                self._downloaded_pieces.add(index)
+            else:
+                if self._debug:
+                    print(f"Piece {index} failed verification")
+            del self._in_progress_pieces[index]
+            self._requested_pieces.remove(index)
+            await self._request_pieces()
+
+    def _validate_piece(self, index, data):
+        hash_func = hashlib.sha1(data).digest()
+        return hash_func == self._torrent.pieces[index]

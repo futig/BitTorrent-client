@@ -4,10 +4,9 @@ from domain.torrent import TorrentFile
 from application.utils.config_parser import get_downloader_config, get_distributer_config
 
 
-def download(path):
-    torrent = TorrentFile(path)
-    session = Downloader(torrent, get_downloader_config())
-    # await session.start()
+async def download(path):
+    downloader = Downloader(path, get_downloader_config())
+    await downloader.download()
     
     
 def distribute(path):

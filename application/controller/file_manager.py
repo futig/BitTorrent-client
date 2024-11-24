@@ -1,14 +1,19 @@
 import asyncio
-
+from domain.torrent import TorrentFile
 from application.interfaces.ifile_manager import IFileManager
 
 
 class FileManager(IFileManager):
-    def __init__(self, download_path, total_length):
+    def __init__(self, download_path, torrent):
         self.download_path = download_path
-        self.file_data = bytearray(total_length)
+        self.file_data = bytearray(torrent.total_length)
         self.lock = asyncio.Lock()
-    
+        self.piece_length = self.torrent.piece_length
+        self.total_length = self.torrent.total_length
+        self.file_data = bytearray(self.total_length)
+        self.downloaded_pieces = set()
+        
+        
     async def save_file(self):
         if self.torrent.multi_file:
             for file_info in self.torrent.files:

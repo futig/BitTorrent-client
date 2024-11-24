@@ -7,22 +7,25 @@ import urllib.parse as url
 from application.interfaces.itracker import ITracker
 from domain.peer import Peer
 
+
 class Tracker(ITracker):
     def __init__(self, port, torrent, peer_id):
         self.port = port
         self.torrent = torrent
         self.peer_id = peer_id
         self.session = aiohttp.ClientSession()
-    
-    
-    async def get_peers(self):
-        url = self.torrent.announce + '?' + self._get_url_params()
-        async with self.http_client.get(url) as response:
-            if response.status != 200:
-                raise ConnectionError(f"Ошибка при обращении к трекеру: {response.status}")
-            data = await response.read()
-            return self._parse_tracker_response(data)
 
+    async def get_peers(self):
+        req_url = self.torrent.announce + '?' + self._get_url_params()
+        try:
+            async with aiohttp.ClientSession() as http_client:
+                async with http_client.get(req_url) as response:
+                    if response.status != 200:
+                        raise ConnectionError(f"Ошибка при обращении к трекеру: {response.status}")
+                    data = await response.read()
+            return self._parse_response(data)
+        except Exception as e:
+            print(e)
 
     def _parse_response(self, data: bytes):
         decoded = bencodepy.decode(data)
@@ -37,21 +40,18 @@ class Tracker(ITracker):
         else:
             # Compact format
             for i in range(0, len(peers), 6):
-                ip = socket.inet_ntoa(peers[i : i + 4])
-                port = struct.unpack("!H", peers[i + 4 : i + 6])[0]
+                ip = socket.inet_ntoa(peers[i: i + 4])
+                port = struct.unpack("!H", peers[i + 4: i + 6])[0]
                 peer_list.append(Peer(ip, port))
         return peer_list
 
-
     def _get_url_params(self):
         params = {
-            "info_hash": bytes.fromhex(self.torrent.get_info_hash()),
+            "info_hash": bytes.fromhex(self.torrent.info_hash),
             "peer_id": self.peer_id.encode("utf-8"),
             "port": self.port,
             "uploaded": 0,
             "downloaded": 0,
             "left": self.torrent.total_length,
-            "compact": 1,
         }
         return url.urlencode(params)
-            
