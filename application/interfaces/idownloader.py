@@ -27,6 +27,4 @@ class IDownloader(ABC):
     # async def add_piece(self, index: int, data: bytes):
     #    pass
 
-    # @abstractmethod
-    # def validate_piece(self, index: int, data: bytes) -> bool:
-    #     pass
+

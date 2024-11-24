@@ -5,6 +5,7 @@ import aiohttp
 import urllib.parse as url
 
 from application.interfaces.itracker import ITracker
+from domain.peer import Peer
 
 class Tracker(ITracker):
     def __init__(self, port, torrent, peer_id):
@@ -32,15 +33,16 @@ class Tracker(ITracker):
             for peer in peers:
                 ip = peer[b"ip"].decode("utf-8")
                 port = peer[b"port"]
-                peer_list.append((ip, port))
+                peer_list.append(Peer(ip, port))
         else:
             # Compact format
             for i in range(0, len(peers), 6):
                 ip = socket.inet_ntoa(peers[i : i + 4])
                 port = struct.unpack("!H", peers[i + 4 : i + 6])[0]
-                peer_list.append((ip, port))
+                peer_list.append(Peer(ip, port))
         return peer_list
-        
+
+
     def _get_url_params(self):
         params = {
             "info_hash": bytes.fromhex(self.torrent.get_info_hash()),
