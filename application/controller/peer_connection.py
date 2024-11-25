@@ -61,9 +61,11 @@ class PeerConnection(IPeerConnection):
             print(f"Handshake с {self._ip}:{self._port} успешен.")
 
     async def _listen(self):
-        while len(self._downloaded_pieces) < self._torrent.pieces_count:
+        while True:
             try:
-                length_prefix = await self._reader.readexactly(4)
+                length_prefix = await asyncio.wait_for(
+                    self._reader.readexactly(4), timeout=15
+                )
                 if not length_prefix:
                     if self._debug:
                         print(f"Соединение с {self._ip}:{self._port} закрыто.")
@@ -77,6 +79,10 @@ class PeerConnection(IPeerConnection):
 
                 message = await self._reader.readexactly(length)
                 await self._handle_message(message[0], message[1:])
+            except asyncio.TimeoutError:
+                if self._debug:
+                    print(f"Соединение с {self._ip}:{self._port} прервано.")
+                break
             except asyncio.IncompleteReadError:
                 if self._debug:
                     print(f"Соединение с {self._ip}:{self._port} прервано.")
