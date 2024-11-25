@@ -40,7 +40,6 @@ class Downloader(IDownloader):
 
     async def connect_to_peers(self, peers):
         connections_count = min(len(peers), self.max_connections)
-        print(self.debug)
         cons = [
             PeerConnection(
                 peers[i],
@@ -53,5 +52,6 @@ class Downloader(IDownloader):
             for i in range(connections_count)
         ]
         tasks = [con.connect() for con in cons]
+        print("Началась загрузка...")
         await asyncio.gather(*tasks)
 
