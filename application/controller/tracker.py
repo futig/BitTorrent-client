@@ -7,6 +7,7 @@ import urllib.parse as url
 from application.interfaces.itracker import ITracker
 from domain.peer import Peer
 
+TIMEOUT = 3
 
 class Tracker(ITracker):
     def __init__(self, port, torrent, peer_id):
@@ -18,14 +19,15 @@ class Tracker(ITracker):
     async def get_peers(self):
         req_url = self.torrent.announce + '?' + self._get_url_params()
         try:
-            async with aiohttp.ClientSession() as http_client:
-                async with http_client.get(req_url) as response:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(req_url, timeout=TIMEOUT) as response:
                     if response.status != 200:
                         raise ConnectionError(f"Ошибка при обращении к трекеру: {response.status}")
                     data = await response.read()
             return self._parse_response(data)
         except Exception as e:
-            print(e)
+            if session:
+                await session.close()
 
     def _parse_response(self, data: bytes):
         decoded = bencodepy.decode(data)
@@ -52,6 +54,6 @@ class Tracker(ITracker):
             "port": self.port,
             "uploaded": 0,
             "downloaded": 0,
-            "left": self.torrent.total_length,
+            "left": self.torrent.size,
         }
         return url.urlencode(params)

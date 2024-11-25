@@ -8,14 +8,14 @@ from domain.message_types import MessageTypes
 
 
 class PeerConnection(IPeerConnection):
-    def __init__(self, peer, torrent, peer_id, file_manager, debug, allowMultiReq):
+    def __init__(self, peer, torrent, peer_id, file_manager, debug, max_requests):
         self._ip = peer.ip
         self._port = peer.port
         self._peer_id = peer_id
         self._torrent = torrent
         self._file_manager = file_manager
         self._debug = debug
-        self._requestsLimit = 5 if allowMultiReq else 1
+        self._requestsLimit = max(1, max_requests)
 
         self._reader = None
         self._writer = None
@@ -32,14 +32,14 @@ class PeerConnection(IPeerConnection):
             )
             await self._handshake()
             await self._listen()
-        except Exception as e:
-            if self._debug:
-                print(f"Не удалось подключиться к пиру {self._ip}:{self._port} - {e}")
-        finally:
             self._writer.close()
             await self._writer.wait_closed()
             if self._debug:
                 print("Connection closed")
+        except Exception as e:
+            if self._debug:
+                print(f"Не удалось подключиться к пиру {self._ip}:{self._port} - {e}")
+
 
     async def _handshake(self):
         pstr = b"BitTorrent protocol"
@@ -47,9 +47,7 @@ class PeerConnection(IPeerConnection):
         reserved = b"\x00" * 8
         info_hash = bytes.fromhex(self._torrent.info_hash)
         peer_id = self._peer_id.encode("utf-8")
-        handshake = struct.pack(
-            f"!B{pstrlen}s8s20s20s", pstrlen, pstr, reserved, info_hash, peer_id
-        )
+        handshake = b"".join([pstrlen, pstr, reserved, info_hash, peer_id])
         self._writer.write(handshake)
         await self._writer.drain()
 
@@ -63,18 +61,18 @@ class PeerConnection(IPeerConnection):
             print(f"Handshake с {self._ip}:{self._port} успешен.")
 
     async def _listen(self):
-        while True:
+        while len(self._downloaded_pieces) < self._torrent.pieces_count:
             try:
                 length_prefix = await self._reader.readexactly(4)
                 if not length_prefix:
                     if self._debug:
-                        print("Соединение с {self.ip}:{self.port} закрыто.")
+                        print(f"Соединение с {self._ip}:{self._port} закрыто.")
                     break
 
                 (length,) = struct.unpack("!I", length_prefix)
                 if length == 0:
                     if self._debug:
-                        print("Keep alive {self.ip}:{self.port}")
+                        print(f"Keep alive {self._ip}:{self._port}")
                     break
 
                 message = await self._reader.readexactly(length)
@@ -85,9 +83,7 @@ class PeerConnection(IPeerConnection):
                 break
             except Exception as e:
                 if self._debug:
-                    print(
-                        f"Ошибка при получении данных от {self._ip}:{self._port} - {e}"
-                    )
+                    print(f"Ошибка при получении данных от {self._ip}:{self._port} - {e}")
                 break
 
     async def _handle_message(self, msg_id, payload):
@@ -189,5 +185,5 @@ class PeerConnection(IPeerConnection):
             await self._request_pieces()
 
     def _validate_piece(self, index, data):
-        hash_func = hashlib.sha1(data).digest()
-        return hash_func == self._torrent.pieces[index]
+        piece_hash = hashlib.sha1(data).digest()
+        return piece_hash == self._torrent.get_piece_hash(index)

@@ -1,6 +1,5 @@
 import os
 import aiofiles
-from domain.torrent import TorrentFile
 import domain.exceptions as exc
 from application.interfaces.ifile_manager import IFileManager
 

@@ -10,32 +10,37 @@ from domain.torrent import TorrentFile
 
 
 class Downloader(IDownloader):
-    def __init__(self, path, config: dict):
+    def __init__(self, path, config):
         self.torrent = TorrentFile(path)
         self.peer_id = generate_peer_id()
         try:
             self.file_manager = FileManager(config["download_path"], self.torrent)
-            self.port = config["port"]
-            self.debug = config["debug"]
-            self.max_connections = config["max_connections"]
-            self.allow_multiple_requests = config["allow_multiple_requests"]
+            self.port = int(config["port"])
+            self.debug = config["debug"] == "True"
+            self.max_connections = int(config["max_connections"])
+            self.max_requests = int(config["max_requests"])
         except KeyError as e:
             raise exc.ConfigFieldException(e) from None
         if self.debug:
             print("Downloader was initialized successfully", end="\n")
 
     async def download(self):
-        tracker = Tracker(self.port, self.torrent, self.peer_id)
-        peers = await tracker.get_peers()
-        if not peers:
-            raise exc.NoPeersException()
-        if self.debug:
-            print(f"Got {len(peers)} peers", end="\n")
-        await self.connect_to_peers(peers)
-        print("Done!")
+        try:
+            await self.file_manager.create_empty_files()
+            tracker = Tracker(self.port, self.torrent, self.peer_id)
+            peers = await tracker.get_peers()
+            if not peers:
+                raise exc.NoPeersException()
+            if self.debug:
+                print(f"Got {len(peers)} peers", end="\n")
+            await self.connect_to_peers(peers)
+            print("Done!")
+        except Exception as e:
+            print("Something went wrong")
 
     async def connect_to_peers(self, peers):
         connections_count = min(len(peers), self.max_connections)
+        print(self.debug)
         cons = [
             PeerConnection(
                 peers[i],
@@ -43,8 +48,10 @@ class Downloader(IDownloader):
                 self.peer_id,
                 self.file_manager,
                 self.debug,
-                self.allow_multiple_requests,
+                self.max_requests,
             )
             for i in range(connections_count)
         ]
-        await asyncio.gather(con.connect() for con in cons)
+        tasks = [con.connect() for con in cons]
+        await asyncio.gather(*tasks)
+

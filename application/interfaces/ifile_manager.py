@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 
 class IFileManager(ABC):
     @abstractmethod
-    async def save_file(self):
+    async def create_empty_files(self):
         pass
 
     @abstractmethod

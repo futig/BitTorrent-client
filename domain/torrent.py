@@ -57,6 +57,9 @@ class TorrentFile:
             name = self.info.get(b"name", b"").decode("utf-8")
             return [File(name, length)]
 
+    def get_piece_hash(self, index):
+        return self.pieces[index * 20:index * 20 + 20]
+
     def get_info_hash(self):
         """
         Вычисляет info_hash, необходимый для взаимодействия с трекером и пиринговой сетью.
